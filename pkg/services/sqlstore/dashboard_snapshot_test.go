@@ -7,6 +7,7 @@ import (
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	m "github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/setting"
 )
 
 func TestDashboardSnapshotDBAccess(t *testing.T) {
@@ -104,4 +105,61 @@ func TestDashboardSnapshotDBAccess(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestDeleteExpiredSnapshots(t *testing.T) {
+	Convey("Testing dashboard snapshots clean up", t, func() {
+		InitTestDB(t)
+
+		setting.SnapShotRemoveExpired = true
+
+		notExpiredsnapshot := createTestSnapshot("key1", -1000)
+		createTestSnapshot("key2", 1000)
+		createTestSnapshot("key3", 1000)
+
+		Convey("Clean up old dashboard snapshots", func() {
+			err := DeleteExpiredSnapshots(&m.DeleteExpiredSnapshotsCommand{})
+			So(err, ShouldBeNil)
+
+			query := m.GetDashboardSnapshotsQuery{
+				OrgId:        1,
+				SignedInUser: &m.SignedInUser{OrgRole: m.ROLE_ADMIN},
+			}
+			err = SearchDashboardSnapshots(&query)
+			So(err, ShouldBeNil)
+
+			So(len(query.Result), ShouldEqual, 1)
+			So(query.Result[0].Key, ShouldEqual, notExpiredsnapshot.Key)
+		})
+
+		Convey("Don't delete anything if there are no expired snapshots", func() {
+			err := DeleteExpiredSnapshots(&m.DeleteExpiredSnapshotsCommand{})
+			So(err, ShouldBeNil)
+
+			query := m.GetDashboardSnapshotsQuery{
+				OrgId:        1,
+				SignedInUser: &m.SignedInUser{OrgRole: m.ROLE_ADMIN},
+			}
+			SearchDashboardSnapshots(&query)
+
+			So(len(query.Result), ShouldEqual, 1)
+		})
+	})
+}
+
+func createTestSnapshot(key string, expires int64) *m.DashboardSnapshot {
+	cmd := m.CreateDashboardSnapshotCommand{
+		Key:       key,
+		DeleteKey: "delete" + key,
+		Dashboard: simplejson.NewFromAny(map[string]interface{}{
+			"hello": "mupp",
+		}),
+		UserId:  1000,
+		OrgId:   1,
+		Expires: expires,
+	}
+	err := CreateDashboardSnapshot(&cmd)
+	So(err, ShouldBeNil)
+
+	return cmd.Result
 }
